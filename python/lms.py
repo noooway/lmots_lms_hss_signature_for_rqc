@@ -53,6 +53,10 @@ def lms_verify( message, signature, public_key ):
 
 
 def lms_is_exhausted( private_key ):
+    # typecode = private_key[ "typecode" ]
+    # h, m = lms_typecode_to_params[ typecode ]
+    # q = private_key[ "q" ]
+    # return q >= 2**h - 1 # todo: recheck
     pass
 
 
@@ -140,11 +144,11 @@ def lms_compute_message_signature( message, private_key ):
     typecode = private_key["typecode"]
     ots_typecode = private_key["ots_typecode"]
     I = private_key["I"]
-    lms_update_q( private_key )
     q = private_key["q"]
     ots_priv = private_key["ots_priv"]
     ots_pub = private_key["ots_pub"]
     ots_signature = lmots.lmots_sign( message, ots_priv[q] )
+    lms_update_q( private_key )
     leaf_to_root_path = lms_compute_leaf_to_root_path( typecode, I, q, ots_pub )
     serialized = lms_serialize_signature( q, typecode, ots_signature, leaf_to_root_path )
     signature = {
@@ -189,12 +193,12 @@ def lms_is_correct_signature( message, signature, public_key ):
     if lms_pub_too_short( public_key ):
         return False
     pubtype = public_key['typecode']
-    ots_pubtype = public_key['ots_typecode']
     h, m = lms_typecode_to_params[ pubtype ]
     if lms_pub_wrong_len( public_key ):
         return False
     I = public_key['I']
     T1 = public_key['T1']
+    ots_pubtype = public_key['ots_typecode']
     Tc = lms_compute_root_candidate( message, signature, I, pubtype, ots_pubtype )
     if not Tc:
         return False
@@ -202,9 +206,12 @@ def lms_is_correct_signature( message, signature, public_key ):
 
 
 def lms_pub_too_short( public_key ):
+    # return len( public_key["serialized"] ) < 4 
     pass
 
 def lms_pub_wrong_len( public_key ):
+    h, m = lms_typecode_to_params[ public_key["typecode"] ]    
+    # return len( public_key["serialized"] ) != 20 + m
     pass
 
 
@@ -212,14 +219,17 @@ def lms_compute_root_candidate( message, signature, I, pubtype, ots_pubtype ):
     if lms_signature_too_short( signature ):
         return None
     q = signature['q']
-    ots_signature = signature['ots_signature'] 
-    ots_sigtype = ots_signature['typecode']
-    if lms_otssignature_wrong_len( ots_signature ):
+    ots_sigtype = signature['ots_signature']['typecode']
+    if ots_sigtype != ots_pubtype:
         return None
-    if signature['typecode'] != pubtype:
+    if lms_is_wrong_signature_length_wrt_ots_parameters( ots_sigtype, signature ):
+        return None
+    ots_signature = signature['ots_signature']
+    sigtype = signature['typecode']
+    if sigtype != pubtype:
         return None
     h, m = lms_typecode_to_params[ pubtype ]
-    if q >= 2 ** h or lms_wrong_sign_len( signature ):
+    if q >= 2 ** h or lms_if_signature_length_not_exact( sigtype, ots_sigtype, signature ):
         return None
     path = signature['leaf_to_root_path']
     Kc = lmots.lmots_compute_key_candidate( message, ots_signature, ots_pubtype, I, q )
@@ -241,14 +251,18 @@ def lms_compute_root_candidate( message, signature, I, pubtype, ots_pubtype ):
     return Tc
 
 def lms_signature_too_short( signature ):
+    # return len( signature["serialized"] ) < 8 
     pass
 
-def lms_otssignature_wrong_len( ots_signature ):
-    ots_sigtype = ots_signature['typecode']
+def lms_is_wrong_signature_length_wrt_ots_parameters( ots_sigtype, signature ):
     n, w, p = lmots.lmots_typecode_to_params[ ots_sigtype ]
+    # return len( signature["serialized"] ) < 12 + n * (p + 1 )
     pass
 
-def lms_wrong_sign_len( signature ):
+def lms_if_signature_length_not_exact( sigtype, ots_sigtype, signature ):
+    n, w, p = lmots.lmots_typecode_to_params[ ots_sigtype ]
+    h, m = lms_typecode_to_params[ sigtype ]
+    # return len( signature["serialized"] ) != 12 + n * (p+1) + m * h
     pass
 
 def is_odd( x ):

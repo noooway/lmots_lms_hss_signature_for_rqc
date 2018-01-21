@@ -73,8 +73,9 @@ def lmots_gen_I():
     pass
         
 
-def lmots_gen_q():
-    return 0x00000000
+def lmots_gen_q():    
+    #return 0x00000000
+    pass
 
 
 def lmots_priv_key_serialize( typecode, I, q, x ):
@@ -131,7 +132,7 @@ def lmots_serialize_pub_key( typecode, I, q, K ):
 def lmots_compute_message_signature( message, private_key ):
     typecode = private_key["typecode"]
     I = private_key["I"]
-    q = private_key["q"]    
+    q = private_key["q"]
     x = private_key["x"]
     C = lmots_gen_C_for_signature()
     y = lmots_compute_y( message, typecode, I, q, C, x )
@@ -152,14 +153,14 @@ def lmots_gen_C_for_signature():
 def lmots_compute_y( message, typecode, I, q, C, x ):    
     n, w, p = lmots_typecode_to_params[ typecode ]
     H = hashlib.sha256()
+    y = []
     Q = H.digest( I + u32str(q) + u16str(LMOTS_D_MESG) + C + message )
     for i in range( p ):
         a = lmots_coef( Q + lmots_chksum(Q), i, w )
         tmp = x[i]
-        H = hashlib.sha256()
         for j in range( a ):            
             tmp = H.digest( I + u32str(q) + u16str(i) + u8str(j) + tmp )
-            y[i] = tmp
+        y.append( tmp )
     return y
 
 
@@ -171,8 +172,13 @@ def lmots_serialize_signature( typecode, C, y ):
 
 
 def lmots_coef( S, i, w ):
-    pass
+    out = ( 2**w - 1 ) & lmots_byte( S, floor( i * w // 8 ) )
+    shift = 8 - ( w * ( i % ( 8 // w )) + w )    
+    return out >> shift
 
+def lmots_byte( S, i ):
+    #return S[i]
+    pass
 
 def lmots_chksum( input_string, str_len_in_bytes ):
     pass
@@ -186,42 +192,52 @@ def lmots_chksum( input_string, str_len_in_bytes ):
 ### Verify
 
 def lmots_is_correct_signature( message, signature, public_key ):
-    if is_wrong_keylength( public_key ):
+    if lmots_pub_key_too_short( public_key ):
         return False
     pubtype = public_key["typecode"]
+    if lmots_is_wrong_keylength( pubtype, public_key ):
+        return False
     I = public_key["I"]
     q = public_key["q"]
     K = public_key["K"]
-    kc = lmots_compute_key_candidate( message, signature, pubtype, I, q, K )
+    kc = lmots_compute_key_candidate( message, signature, pubtype, I, q )
     if not kc:
         return False
     #
     return kc == K
 
+def lmots_pub_key_too_short( public_key ):
+    #return len( public_key["serialized"] ) < 4
+    pass
 
-def is_wrong_keylength( key ):
+
+def lmots_is_wrong_keylength( pubtype, public_key ):
+    n, w, p = lmots_typecode_to_params[ pubtype ]
+    #return len( public_key["serialized"] ) != 24 + n
     pass
 
 
 def lmots_compute_key_candidate( message, signature, pubtype, I, q ):
-    if is_wrong_signature_len( signature ):
+    if lmots_is_signature_too_short( signature ):
         return None
     sigtype = signature["typecode"]
     if sigtype != pubtype:
         return None
     n, w, p = lmots_typecode_to_params[ sigtype ]
+    if lmots_is_wrong_signature_length( sigtype, signature ):
+        return None
     C = signature["C"]
     y = signature["y"]
-    q = signature["q"]
     H = hashlib.sha256()
     Q = H.digest( I + u32str(q) + u16str( LMOTS_D_MESG ) + C + message )
+    z = []
     for i in range( p ):
         a = lmots_coef( Q + lmots_chksum( Q ), i, w )
         tmp = y[i]
         H = hashlib.sha256()
         for j in range( 2 ** w - 1 ):            
             tmp = H.digest( I + u32str(q) + u16str(i) + u8str(j) + tmp )
-        z[i] = tmp
+        z.append( tmp )
     H = hashlib.sha256()
     H.update( I + u32str(q) + u16str( LMOTS_D_PBLC ) )
     for z_i in z:
@@ -230,5 +246,18 @@ def lmots_compute_key_candidate( message, signature, pubtype, I, q ):
     return kc
 
 
-def is_wrong_signature_len( signature ):
+def lmots_is_signature_too_short( signature ):
+    #return len( signature["serialized"] ) < 4
+    pass
+
+
+def lmots_is_wrong_signature_length( sigtype, signature ):
+    n, w, p = lmots_typecode_to_params[ sigtype ]
+    #return len( signature["serialized"] ) != 4 + n * (p+1)
+    pass
+
+
+def lmots_is_wrong_ots_signature_length_in_lms( ots_sigtype, ots_signature ):
+    n, w, p = lmots_typecode_to_params[ sigtype ]
+    #return len( signature["serialized"] ) != 12 + n * (p+1)
     pass
