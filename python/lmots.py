@@ -56,8 +56,8 @@ def lmots_gen_private_key( typestring, I = None, q = None ):
     q = q or lmots_gen_q()
     x = []
     for i in range( p ):
-        uniform_nbyte = "go to hell" # todo
-        self.x.append( uniform_nbyte )
+        uniform_nbyte = None # todo
+        x.append( uniform_nbyte )
     serialized = lmots_priv_key_serialize( typecode, I, q, x )
     prv = {
         "typecode": typecode, 
