@@ -1,5 +1,10 @@
+import os
 import sys
-import hashlib
+import math
+import copy
+import hashlib as H
+
+from utils import *
 
 lmots_typestring_to_typecode = {
     "lmots_reserved": 0,
@@ -26,8 +31,8 @@ lmots_typecode_to_params = [
     ( 32, 8, 34, 0 )
 ]
 
-LMOTS_D_MESG = "0x8181"
-LMOTS_D_PBLC = "0x8080"
+LMOTS_D_MESG = int( "0x8181", 0 )  # u16str( int( "0x8181", 0 ) ) = b'\x81\x81'
+LMOTS_D_PBLC = int( "0x8080", 0 )  # u16str( int( "0x8080", 0 ) ) = b'\x80\x80'
 
 
 def lmots_gen_keypair( typestring, I = None, q = None ):
@@ -51,12 +56,12 @@ def lmots_verify( message, signature, public_key ):
 
 def lmots_gen_private_key( typestring, I = None, q = None ):    
     typecode = lmots_typestring_to_typecode[ typestring ]
-    n, w, p = lmots_typecode_to_params[ typecode ]
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
     I = I or lmots_gen_I()
-    q = q or lmots_gen_q()
+    q = q or lmots_q()
     x = []
     for i in range( p ):
-        uniform_nbyte = None # todo
+        uniform_nbyte = os.urandom( n )
         x.append( uniform_nbyte )
     serialized = lmots_priv_key_serialize( typecode, I, q, x )
     prv = {
@@ -70,12 +75,12 @@ def lmots_gen_private_key( typestring, I = None, q = None ):
 
 
 def lmots_gen_I():
-    pass
+    I_len = 16
+    return os.urandom( I_len )
         
 
-def lmots_gen_q():    
-    #return 0x00000000
-    pass
+def lmots_q():
+    return 0
 
 
 def lmots_priv_key_serialize( typecode, I, q, x ):
@@ -90,9 +95,9 @@ def lmots_priv_key_serialize( typecode, I, q, x ):
         
 def lmots_gen_public_key( typestring, prv ):
     typecode = lmots_typestring_to_typecode[ typestring ]
-    I = prv["I"]
-    q = prv["q"]
-    x = prv["x"]
+    I = copy.deepcopy( prv["I"] )
+    q = copy.deepcopy( prv["q"] )
+    x = copy.deepcopy( prv["x"] )
     K = lmots_compute_K( typecode, I, q, x )
     serialized = lmots_serialize_pub_key( typecode, I, q, K )
     pub = {
@@ -106,19 +111,18 @@ def lmots_gen_public_key( typestring, prv ):
 
 
 def lmots_compute_K( typecode, I, q, x ):
-    H = hashlib.sha256()
-    n, w, p = lmots_typecode_to_params( typecode )    
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
     y = []
     for i in range( p ):
         tmp = x[i]
         for j in range( 2 ** w - 1 ):
-            tmp = H.digest( I + u32str(q) + u16str(i) + u8str(j) + tmp )
+            tmp = H.sha256( I + u32str(q) + u16str(i) + u8str(j) + tmp ).digest()
         y.append( tmp )
-    H = hashlib.sha256()
-    H.update( I + u32str(q) + u16str( LMOTS_D_PBLC ) )
+    h = H.sha256()
+    h.update( I + u32str(q) + u16str( LMOTS_D_PBLC ) )
     for y_i in y:
-        H.update( y_i )
-    K = H.digest()
+        h.update( y_i )
+    K = h.digest()
     return K
 
 
@@ -131,10 +135,11 @@ def lmots_serialize_pub_key( typecode, I, q, K ):
 
 def lmots_compute_message_signature( message, private_key ):
     typecode = private_key["typecode"]
-    I = private_key["I"]
-    q = private_key["q"]
-    x = private_key["x"]
-    C = lmots_gen_C_for_signature()
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
+    I = copy.deepcopy( private_key["I"] )
+    q = copy.deepcopy( private_key["q"] )
+    x = copy.deepcopy( private_key["x"] )
+    C = lmots_gen_C_for_signature( n )
     y = lmots_compute_y( message, typecode, I, q, C, x )
     serialized = lmots_serialize_signature( typecode, C, y )
     signature = {
@@ -146,20 +151,19 @@ def lmots_compute_message_signature( message, private_key ):
     return signature
 
     
-def lmots_gen_C_for_signature():
-    pass
+def lmots_gen_C_for_signature( n ):
+    return os.urandom( n )
 
 
 def lmots_compute_y( message, typecode, I, q, C, x ):    
-    n, w, p = lmots_typecode_to_params[ typecode ]
-    H = hashlib.sha256()
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
     y = []
-    Q = H.digest( I + u32str(q) + u16str(LMOTS_D_MESG) + C + message )
+    Q = H.sha256( I + u32str(q) + u16str(LMOTS_D_MESG) + C + message ).digest()
     for i in range( p ):
-        a = lmots_coef( Q + lmots_chksum(Q), i, w )
+        a = lmots_coef( Q + lmots_chksum(Q, w, ls), i, w )
         tmp = x[i]
         for j in range( a ):            
-            tmp = H.digest( I + u32str(q) + u16str(i) + u8str(j) + tmp )
+            tmp = H.sha256( I + u32str(q) + u16str(i) + u8str(j) + tmp ).digest()
         y.append( tmp )
     return y
 
@@ -171,50 +175,55 @@ def lmots_serialize_signature( typecode, C, y ):
     return serialized
 
 
+def lmots_chksum( S, w, ls ):
+    tmp = 0
+    for i in range( len(S) * 8 // w ):
+        tmp = tmp + ( 2 ** w - 1 ) - lmots_coef( S, i, w )
+    return u16str( tmp << ls )
+
+
 def lmots_coef( S, i, w ):
-    out = ( 2**w - 1 ) & lmots_byte( S, floor( i * w // 8 ) )
+    # test:
+    # from bitstring import *
+    # a = BitArray( '0b 0001 0010 0011 0100' )
+    # s = a.bytes
+    # b = [ lmots_coef( s, i, 2 ) for i in range( len(a) // 2 ) ]
+    tmp1 = ( 2**w - 1 )
     shift = 8 - ( w * ( i % ( 8 // w )) + w )    
-    return out >> shift
+    tmp2 = lmots_byte( S, math.floor( i * w // 8 ) ) >> shift    
+    return tmp1 & tmp2
+
 
 def lmots_byte( S, i ):
-    #return S[i]
-    pass
-
-def lmots_chksum( input_string, str_len_in_bytes ):
-    pass
-    # tmp = 0
-    # for i in range( str_len_in_bytes * 8 / w ):
-    #     tmp = tmp + ( 2 ** w - 1 ) - lmots_coef( input_string, i, w )
-    # return ( tmp << ls )
-
+    return S[i]
 
 
 ### Verify
 
 def lmots_is_correct_signature( message, signature, public_key ):
-    if lmots_pub_key_too_short( public_key ):
+    if lmots_is_pub_key_too_short( public_key ):
         return False
     pubtype = public_key["typecode"]
     if lmots_is_wrong_keylength( pubtype, public_key ):
         return False
-    I = public_key["I"]
-    q = public_key["q"]
-    K = public_key["K"]
+    I = copy.deepcopy( public_key["I"] )
+    q = copy.deepcopy( public_key["q"] )
+    K = copy.deepcopy( public_key["K"] )
     kc = lmots_compute_key_candidate( message, signature, pubtype, I, q )
     if not kc:
         return False
-    #
+    print( "kc:", kc )
+    print( "K:", K )
     return kc == K
 
-def lmots_pub_key_too_short( public_key ):
-    #return len( public_key["serialized"] ) < 4
-    pass
+
+def lmots_is_pub_key_too_short( public_key ):
+    return len( public_key["serialized"] ) < 4
 
 
 def lmots_is_wrong_keylength( pubtype, public_key ):
-    n, w, p = lmots_typecode_to_params[ pubtype ]
-    #return len( public_key["serialized"] ) != 24 + n
-    pass
+    n, w, p, ls = lmots_typecode_to_params[ pubtype ]
+    return len( public_key["serialized"] ) != 24 + n
 
 
 def lmots_compute_key_candidate( message, signature, pubtype, I, q ):
@@ -223,41 +232,36 @@ def lmots_compute_key_candidate( message, signature, pubtype, I, q ):
     sigtype = signature["typecode"]
     if sigtype != pubtype:
         return None
-    n, w, p = lmots_typecode_to_params[ sigtype ]
+    n, w, p, ls = lmots_typecode_to_params[ sigtype ]
     if lmots_is_wrong_signature_length( sigtype, signature ):
         return None
-    C = signature["C"]
-    y = signature["y"]
-    H = hashlib.sha256()
-    Q = H.digest( I + u32str(q) + u16str( LMOTS_D_MESG ) + C + message )
+    C = copy.deepcopy( signature["C"] )
+    y = copy.deepcopy( signature["y"] )
+    Q = H.sha256( I + u32str(q) + u16str( LMOTS_D_MESG ) + C + message ).digest()
     z = []
     for i in range( p ):
-        a = lmots_coef( Q + lmots_chksum( Q ), i, w )
+        a = lmots_coef( Q + lmots_chksum( Q, w, ls ), i, w )
         tmp = y[i]
-        H = hashlib.sha256()
         for j in range( 2 ** w - 1 ):            
-            tmp = H.digest( I + u32str(q) + u16str(i) + u8str(j) + tmp )
+            tmp = H.sha256( I + u32str(q) + u16str(i) + u8str(j) + tmp ).digest()
         z.append( tmp )
-    H = hashlib.sha256()
-    H.update( I + u32str(q) + u16str( LMOTS_D_PBLC ) )
+    h = H.sha256()
+    h.update( I + u32str(q) + u16str( LMOTS_D_PBLC ) )
     for z_i in z:
-         H.update( z_i )
-    kc = H.digest()
+         h.update( z_i )
+    kc = h.digest()
     return kc
 
 
 def lmots_is_signature_too_short( signature ):
-    #return len( signature["serialized"] ) < 4
-    pass
+    return len( signature["serialized"] ) < 4
 
 
 def lmots_is_wrong_signature_length( sigtype, signature ):
-    n, w, p = lmots_typecode_to_params[ sigtype ]
-    #return len( signature["serialized"] ) != 4 + n * (p+1)
-    pass
+    n, w, p, ls = lmots_typecode_to_params[ sigtype ]
+    return len( signature["serialized"] ) != 4 + n * (p+1)
 
 
-def lmots_is_wrong_ots_signature_length_in_lms( ots_sigtype, ots_signature ):
-    n, w, p = lmots_typecode_to_params[ sigtype ]
-    #return len( signature["serialized"] ) != 12 + n * (p+1)
-    pass
+# def lmots_is_wrong_ots_signature_length_in_lms( ots_sigtype, ots_signature ):
+#     n, w, p, ls = lmots_typecode_to_params[ ots_sigtype ]
+#     return len( signature["serialized"] ) != 12 + n * (p+1)
