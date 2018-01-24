@@ -242,7 +242,7 @@ def lmots_compute_key_candidate( message, signature, pubtype, I, q ):
     for i in range( p ):
         a = lmots_coef( Q + lmots_chksum( Q, w, ls ), i, w )
         tmp = y[i]
-        for j in range( 2 ** w - 1 ):            
+        for j in range( a, 2 ** w - 1 ):            
             tmp = H.sha256( I + u32str(q) + u16str(i) + u8str(j) + tmp ).digest()
         z.append( tmp )
     h = H.sha256()
