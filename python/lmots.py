@@ -212,8 +212,9 @@ def lmots_is_correct_signature( message, signature, public_key ):
     kc = lmots_compute_key_candidate( message, signature, pubtype, I, q )
     if not kc:
         return False
-    print( "kc:", kc )
-    print( "K:", K )
+    print()
+    print( "Key       (K) :", K )
+    print( "Candidate (Kc):", kc )
     return kc == K
 
 
