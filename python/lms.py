@@ -61,11 +61,10 @@ def lms_verify( message, signature, public_key ):
 
 
 def lms_is_exhausted( private_key ):
-    # typecode = private_key[ "typecode" ]
-    # m, h = lms_typecode_to_params[ typecode ]
-    # q = private_key[ "q" ]
-    # return q >= 2**(h+1) - 1 # todo: recheck
-    pass
+    typecode = private_key[ "typecode" ]
+    m, h = lms_typecode_to_params[ typecode ]
+    q = private_key[ "q" ]
+    return q >= 2**(h+1) - 1 # todo: recheck
 
 
 ### Private key

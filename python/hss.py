@@ -1,7 +1,8 @@
 import sys
-import hashlib
+import copy
 
 import lms
+from utils import *
 
 def hss_gen_keypair( L ):
     prv = hss_gen_private_key( L )
@@ -28,14 +29,18 @@ def hss_gen_private_key( L ):
     lms_prv = []
     lms_pub = []
     for i in range( L ):
-        prv_i, pub_i = lms_gen_keypair( lms_typestring )
+        prv_i, pub_i = lms.lms_gen_keypair( lms_typestring )
         lms_prv.append( prv_i )
-        lms_pub.append( pub_i )    
+        lms_pub.append( pub_i )
+    sig = [ None ] * L
+    for i in range( L-1 ):
+        sig[i] = lms.lms_sign( lms_pub[i+1]["serialized"], lms_prv[i] )
     prv = {
         "lms_typecode": lms_typecode, 
         "L": L,        
         "lms_prv": lms_prv,
-        "lms_pub": lms_pub
+        "lms_pub": lms_pub,
+        "sig": sig
     }
     return prv
 
@@ -58,72 +63,87 @@ def hss_gen_public_key( L, private_key ):
 
 
 def hss_serialize_public_key( L, pub0 ):
-    return( u32str(L) + pub0 )
+    return( u32str(L) + pub0["serialized"] )
 
 
 ### Sign
 
 def hss_compute_message_signature( message, private_key ):
-    # todo: recheck sig
-    sig = [ None ] * L
     lms_typecode = private_key["lms_typecode"]
     L = private_key["L"]
-    lms_prv = private_key["lms_prv"]
-    lms_pub = private_key["lms_pub"]
-    d = L - 1
-    while lms.lms_is_exhausted( lms_prv[d] ):
-        d = d - 1
-        if d < 0:
+    lms_prv = private_key["lms_prv"] # no deepcopy; should change dynamically
+    lms_pub = private_key["lms_pub"] # no deepcopy; should change dynamically
+    sig = private_key["sig"] # no deepcopy; should change dynamically
+    i = L - 1
+    last_exhausted = None
+    while lms.lms_is_exhausted( lms_prv[i] ):
+        last_exhausted = i
+        i = i - 1
+        if i < 0:
             sys.exit( "hss exhausted" )
-    # todo: def hss_regenerate_keys
-    for i in range( d, L ):
-        prv_i, pub_i = lms_gen_keypair( lms_typecode_to_typestring[ lms_typecode ] )
-        lms_prv[i] = prv_i
-        lms_pub[i] = pub_i
-    for i in range( d, L ):
-        sig[i-1] = lms_sign( lms_pub[i], lms_prv[i-1] )
-    sig[L-1] = lms_sign( message, lms_prv[L-1] )
-    # todo: recheck; L is different from Npsk
+    if last_exhausted:
+        hss_regenerate_keys( L, last_exhausted, lms_prv, lms_pub, sig, lms_typecode )
+    sig[L-1] = lms.lms_sign( message, lms_prv[L-1] )
     signed_pub_keys = []
-    for i in range( L ):
-        signed_pub_keys.append( sig[i] + pub[i+1] ) # todo: possible i+1 > L ?
+    Npsk = L - 1
+    for i in range( Npsk ):
+        signed_pub_keys.append(
+            { "sig" : sig[i],
+              "pub" : lms_pub[i+1],
+              "serialized" : sig[i]["serialized"] + lms_pub[i+1]["serialized"] } )
+    serialized = hss_serialize_signature( Npsk, signed_pub_keys, sig[Npsk] )
     signature = {
-        "L": L,
+        "Npsk": Npsk,
         "signed_pub_keys": signed_pub_keys,
+        "msg_sig": sig[Npsk], 
         "serialized": None
     }
     return signature
 
 
-def hss_serialize_signature():
-    pass
+def hss_regenerate_keys( L, last_exhausted, lms_prv, lms_pub, sig, lms_typecode ):
+    for i in range( last_exhausted, L ):
+        prv_i, pub_i = lms.lms_gen_keypair(
+            lms.lms_typecode_to_typestring[ lms_typecode ] )
+        lms_prv[i] = prv_i
+        lms_pub[i] = pub_i
+    for i in range( last_exhausted, L ):
+        sig[i-1] = lms.lms_sign( lms_pub[i]["serialized"], lms_prv[i-1] )
+    
 
+def hss_serialize_signature( Npsk, signed_pub_keys, msg_sig ):
+    serialized = u32str( Npsk )
+    for pub_key_sig in signed_pub_keys:
+        serialized = serialized + pub_key_sig["serialized"]
+    serialized = serialized + msg_sig["serialized"]
+    return serialized
 
 
 ### Verify
 
 def hss_is_correct_signature( message, signature, public_key ):
-    sig_Npsk = signature["Npsk"]
+    sig_Npsk = signature["Npsk"]    
     pub_L = public_key["L"]
-    if sig_Npks + 1 != pub_L:
+    if sig_Npsk + 1 != pub_L:
         return False
     #
     siglist = [ extract_lms_sig(x) for x in signature["signed_pub_keys"] ]
     publist = [ extract_lms_pub(x) for x in signature["signed_pub_keys"] ]
-    siglist.append( extract_lms_sig( signature["signed_pub_keys"][-1] ) ) # todo: ?
+    siglist.append( signature["msg_sig"] )
     #
-    key = public_key
+    key = public_key["pub0"]
     for i in range( sig_Npsk ):
         sig = siglist[i]
-        msg = publist[i]
-        if not lms_verify( msg, sig, key ):
+        msg = publist[i]["serialized"]
+        if not lms.lms_verify( msg, sig, key ):
             return False
-        key = msg
-    return lms_verify( message, siglist[Npsk], key )
+        #key = msg
+        key = publist[i]
+    return lms.lms_verify( message, siglist[sig_Npsk], key )
 
 
 def extract_lms_sig( signed_pub_key_element ):
-    pass
+    return signed_pub_key_element["sig"]
 
 def extract_lms_pub( signed_pub_key_element ):
-    pass
+    return signed_pub_key_element["pub"]
