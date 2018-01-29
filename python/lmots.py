@@ -42,11 +42,16 @@ def lmots_gen_keypair( typestring, I = None, q = None ):
 
 
 def lmots_sign( message, private_key ):
+    if lmots_is_private_key_exhausted( private_key ):
+        print( "Warning: lmots key is exhausted. Signature set to None" )
+        return None
     signature = lmots_compute_message_signature( message, private_key )
     return signature
 
 
 def lmots_verify( message, signature, public_key ):
+    if not signature:
+        return False
     correct = lmots_is_correct_signature( message, signature, public_key )
     return correct
 
@@ -64,12 +69,14 @@ def lmots_gen_private_key( typestring, I = None, q = None ):
         uniform_nbyte = os.urandom( n )
         x.append( uniform_nbyte )
     serialized = lmots_priv_key_serialize( typecode, I, q, x )
+    times_used = 0
     prv = {
         "typecode": typecode, 
         "I": I,
         "q": q,
         "x": x,
-        "serialized": serialized
+        "serialized": serialized,
+        "times_used": times_used
     }
     return prv
 
@@ -90,6 +97,11 @@ def lmots_priv_key_serialize( typecode, I, q, x ):
     return serialized
 
 
+def lmots_is_private_key_exhausted( private_key ):
+    return private_key["times_used"] > 0
+
+def lmots_update_usage_counter( private_key ):
+    private_key["times_used"] += 1
 
 ### Public key
         
@@ -141,7 +153,8 @@ def lmots_compute_message_signature( message, private_key ):
     x = copy.deepcopy( private_key["x"] )
     C = lmots_gen_C_for_signature( n )
     y = lmots_compute_y( message, typecode, I, q, C, x )
-    serialized = lmots_serialize_signature( typecode, C, y )
+    lmots_update_usage_counter( private_key )
+    serialized = lmots_serialize_signature( typecode, C, y )    
     signature = {
         "typecode": typecode,
         "C": C,

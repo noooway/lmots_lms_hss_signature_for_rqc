@@ -16,6 +16,8 @@ def hss_sign( message, private_key ):
 
 
 def hss_verify( message, signature, public_key ):
+    if not signature:
+        return False
     correct = hss_is_correct_signature( message, signature, public_key )
     return correct
 
@@ -76,11 +78,12 @@ def hss_compute_message_signature( message, private_key ):
     sig = private_key["sig"] # no deepcopy; should change dynamically
     i = L - 1
     last_exhausted = None
-    while lms.lms_is_exhausted( lms_prv[i] ):
+    while lms.lms_is_private_key_exhausted( lms_prv[i] ):
         last_exhausted = i
         i = i - 1
         if i < 0:
-            sys.exit( "hss exhausted" )
+            print( "HSS is exhausted. Signature set to None" )
+            return None
     if last_exhausted:
         hss_regenerate_keys( L, last_exhausted, lms_prv, lms_pub, sig, lms_typecode )
     sig[L-1] = lms.lms_sign( message, lms_prv[L-1] )
@@ -96,7 +99,7 @@ def hss_compute_message_signature( message, private_key ):
         "Npsk": Npsk,
         "signed_pub_keys": signed_pub_keys,
         "msg_sig": sig[Npsk], 
-        "serialized": None
+        "serialized": serialized
     }
     return signature
 

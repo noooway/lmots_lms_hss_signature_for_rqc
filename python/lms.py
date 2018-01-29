@@ -51,20 +51,25 @@ def lms_gen_keypair( typestring ):
 
 
 def lms_sign( message, private_key ):
+    if lms_is_private_key_exhausted( private_key ):
+        print( "Warning: lms key is exhausted. Signature set to None" )
+        return None
     signature = lms_compute_message_signature( message, private_key )
     return signature
 
 
 def lms_verify( message, signature, public_key ):
+    if not signature:
+        return False
     correct = lms_is_correct_signature( message, signature, public_key )
     return correct
 
 
-def lms_is_exhausted( private_key ):
+def lms_is_private_key_exhausted( private_key ):
     typecode = private_key[ "typecode" ]
     m, h = lms_typecode_to_params[ typecode ]
     q = private_key[ "q" ]
-    return q >= 2**(h+1) - 1 # todo: recheck
+    return q > 2**h - 1
 
 
 ### Private key
