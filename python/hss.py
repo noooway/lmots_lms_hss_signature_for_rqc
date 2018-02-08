@@ -95,6 +95,7 @@ def hss_compute_message_signature( message, private_key ):
               "pub" : lms_pub[i+1],
               "serialized" : sig[i]["serialized"] + lms_pub[i+1]["serialized"] } )
     serialized = hss_serialize_signature( Npsk, signed_pub_keys, sig[Npsk] )
+    # todo: is L=1 special case? are "signed_pub_keys" should be excluded from signature?
     signature = {
         "Npsk": Npsk,
         "signed_pub_keys": signed_pub_keys,
@@ -124,7 +125,7 @@ def hss_serialize_signature( Npsk, signed_pub_keys, msg_sig ):
 
 ### Verify
 
-def hss_is_correct_signature( message, signature, public_key ):
+def hss_is_correct_signature( message, signature, public_key ):    
     sig_Npsk = signature["Npsk"]    
     pub_L = public_key["L"]
     if sig_Npsk + 1 != pub_L:
@@ -134,6 +135,7 @@ def hss_is_correct_signature( message, signature, public_key ):
     publist = [ extract_lms_pub(x) for x in signature["signed_pub_keys"] ]
     siglist.append( signature["msg_sig"] )
     #
+    # todo: is L=1 case special?
     key = public_key["pub0"]
     for i in range( sig_Npsk ):
         sig = siglist[i]
