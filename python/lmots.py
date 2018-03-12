@@ -6,6 +6,8 @@ import hashlib as H
 
 from utils import *
 
+import binascii
+
 lmots_typestring_to_typecode = {
     "lmots_reserved": 0,
     "lmots_sha256_n32_w1": 1,
@@ -31,12 +33,15 @@ lmots_typecode_to_params = [
     ( 32, 8, 34, 0 )
 ]
 
+LMOTS_I_LEN = 16
+
 LMOTS_D_MESG = int( "0x8181", 0 )  # u16str( int( "0x8181", 0 ) ) = b'\x81\x81'
 LMOTS_D_PBLC = int( "0x8080", 0 )  # u16str( int( "0x8080", 0 ) ) = b'\x80\x80'
 
 
-def lmots_gen_keypair( typestring, I = None, q = None ):
-    prv = lmots_gen_private_key( typestring, I, q )
+def lmots_gen_keypair( typestring, I = None, q = None,
+                       use_pseudorandom_with_SEED = None ):
+    prv = lmots_gen_private_key( typestring, I, q, use_pseudorandom_with_SEED )
     pub = lmots_gen_public_key( typestring, prv )
     return (prv, pub)
 
@@ -59,31 +64,36 @@ def lmots_verify( message, signature, public_key ):
 
 ### Private key
 
-def lmots_gen_private_key( typestring, I = None, q = None ):    
+def lmots_gen_private_key( typestring, I = None, q = None,
+                           use_pseudorandom_with_SEED = None ):    
     typecode = lmots_typestring_to_typecode[ typestring ]
     n, w, p, ls = lmots_typecode_to_params[ typecode ]
     I = I or lmots_gen_I()
     q = q or lmots_q()
     x = []
     for i in range( p ):
-        uniform_nbyte = os.urandom( n )
-        x.append( uniform_nbyte )
+        if use_pseudorandom_with_SEED:
+            x_i = H.sha256( I + u32str( q ) + u16str( i ) + u8str( int( "0xff", 0 ) ) +
+                            use_pseudorandom_with_SEED ).digest()
+        else:
+            x_i = os.urandom( n )
+        x.append( x_i )
     serialized = lmots_priv_key_serialize( typecode, I, q, x )
     times_used = 0
     prv = {
-        "typecode": typecode, 
+        "typecode": typecode,
         "I": I,
         "q": q,
         "x": x,
         "serialized": serialized,
-        "times_used": times_used
+        "times_used": times_used,
+        "use_pseudorandom_with_SEED": use_pseudorandom_with_SEED
     }
     return prv
 
 
 def lmots_gen_I():
-    I_len = 16
-    return os.urandom( I_len )
+    return os.urandom( LMOTS_I_LEN )
         
 
 def lmots_q():
@@ -103,6 +113,19 @@ def lmots_is_private_key_exhausted( private_key ):
 def lmots_update_usage_counter( private_key ):
     private_key["times_used"] += 1
 
+
+def lmots_print_private_key( private_key ):
+    print( "LMOTS private key:" )
+    print( "typecode:", private_key["typecode"] )
+    print( "I:", binascii.hexlify( private_key["I"] ) )
+    print( "q:", private_key["q"] )
+    print( "SEED:", binascii.hexlify( private_key["use_pseudorandom_with_SEED"] ) )
+    for i, x in enumerate( private_key["x"] ):
+        print( "x[{}]: {}".format( i, binascii.hexlify( x ) ) )
+    print( "===" )
+
+
+    
 ### Public key
         
 def lmots_gen_public_key( typestring, prv ):
@@ -141,7 +164,25 @@ def lmots_compute_K( typecode, I, q, x ):
 def lmots_serialize_pub_key( typecode, I, q, K ):
     return( u32str( typecode ) + I + u32str( q ) + K )
 
-        
+
+def lmots_deserialize_pub_key( serialized ):
+    typecode = to_int( serialized[ 0 : u32str_bytelen ] )  # u32str( typecode )
+    I = serialized[ u32str_bytelen : u32str_bytelen + LMOTS_I_LEN ]  # I (16 bytes)
+    q = to_int( serialized[ u32str_bytelen + LMOTS_I_LEN :
+                            u32str_bytelen + LMOTS_I_LEN + u32str_bytelen ]) # u32str(q)
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
+    K = serialized[ u32str_bytelen + LMOTS_I_LEN + u32str_bytelen :
+                    u32str_bytelen + LMOTS_I_LEN + u32str_bytelen + n ]
+    pub = {
+        "typecode" : typecode,
+        "I" : I,
+        "q" : q,
+        "K" : K,
+        "serialized": serialized
+    }
+    return pub
+    
+
 
 ### Sign
 
@@ -186,6 +227,31 @@ def lmots_serialize_signature( typecode, C, y ):
     for y_i in y:
         serialized = serialized + y_i
     return serialized
+
+
+def lmots_deserialize_signature( serialized ):
+    typecode = to_int( serialized[ 0 : u32str_bytelen ] ) # u32str( typecode )
+    n, w, p, ls = lmots_typecode_to_params[ typecode ]
+    C = serialized[ u32str_bytelen: u32str_bytelen + n ]    # n-byte C 
+    y = []
+    for i in range( p ):
+        y.append( serialized[ u32str_bytelen + n + i * n :
+                              u32str_bytelen + n + (i+1) * n ] )
+    signature = {
+        "typecode": typecode,
+        "C": C,
+        "y": y,
+        "serialized": serialized
+    }
+    return signature
+
+
+def lmots_deserialize_signature_from_lms( part_of_ser_lms_signature ):
+    signature = lmots_deserialize_signature( part_of_ser_lms_signature )
+    signature["serialized"] = lmots_serialize_signature(
+        signature["typecode"], signature["C"], signature["y"] )
+    sig_len = len( signature["serialized"] )
+    return( signature, part_of_ser_lms_signature[ sig_len : ] )
 
 
 def lmots_chksum( S, w, ls ):

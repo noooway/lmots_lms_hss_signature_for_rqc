@@ -1,11 +1,15 @@
+import os
 import sys
 import copy
 
 import lms
 from utils import *
 
-def hss_gen_keypair( L ):
-    prv = hss_gen_private_key( L )
+def hss_gen_keypair( L, lms_typestring = "lms_sha256_m32_h5",
+                     ots_typestring = "lmots_sha256_n32_w1",
+                     pseudorandom_lms = False ):
+    prv = hss_gen_private_key( L, lms_typestring, ots_typestring,
+                               pseudorandom_lms )
     pub = hss_gen_public_key( L, prv )
     return (prv, pub)
 
@@ -25,21 +29,27 @@ def hss_verify( message, signature, public_key ):
 
 ### Private key
 
-def hss_gen_private_key( L ):
-    lms_typestring = "lms_sha256_m32_h5"
+def hss_gen_private_key( L, lms_typestring, ots_typestring, pseudorandom_lms ):
     lms_typecode = lms.lms_typestring_to_typecode[ lms_typestring ]
     lms_prv = []
     lms_pub = []
     for i in range( L ):
-        prv_i, pub_i = lms.lms_gen_keypair( lms_typestring )
+        if pseudorandom_lms:
+            m, h = lms.lms_typecode_to_params[ lms_typecode ]
+            SEED = os.urandom( m )
+        else:
+            SEED = None
+        prv_i, pub_i = lms.lms_gen_keypair( lms_typestring, ots_typestring,
+                                            use_pseudorandom_with_SEED = SEED )
         lms_prv.append( prv_i )
         lms_pub.append( pub_i )
     sig = [ None ] * L
     for i in range( L-1 ):
         sig[i] = lms.lms_sign( lms_pub[i+1]["serialized"], lms_prv[i] )
     prv = {
-        "lms_typecode": lms_typecode, 
-        "L": L,        
+        "L": L,
+        "lms_typestring": lms_typestring,
+        "ots_typestring": ots_typestring, 
         "lms_prv": lms_prv,
         "lms_pub": lms_pub,
         "sig": sig
@@ -50,6 +60,14 @@ def hss_gen_private_key( L ):
 def hss_serialize_private_key( private_key ):
     pass
 
+
+def hss_short_print_private_key( private_key ):
+    print( "HSS private key:" )
+    print( "L:", private_key["L"] )
+    print( "lms_typestring:", private_key["lms_typestring"] )
+    print( "ots_typestring:", private_key["ots_typestring"] )
+    for idx, lms_prv in enumerate( private_key["lms_prv"] ):
+        lms.lms_short_print_private_key_for_hss( lms_prv, idx )
 
 ### Public key
 
@@ -68,10 +86,28 @@ def hss_serialize_public_key( L, pub0 ):
     return( u32str(L) + pub0["serialized"] )
 
 
+def hss_deserialize_public_key( serialized ):    
+    L = to_int( serialized[ 0 : u32str_bytelen ] )  # u32str(L)
+    pub0 = lms.lms_deserialize_pub_key( serialized[ u32str_bytelen : ] )
+    pub = {
+        "L": L,
+        "pub0": pub0,
+        "serialized": serialized
+    }
+    return pub
+
+
+def hss_read_public_key_from_file( filename ):
+    with open( filename, 'rb' ) as f:
+        pub_serialized = f.read()
+        pub = hss_deserialize_public_key( pub_serialized )
+    return pub
+
+
 ### Sign
 
 def hss_compute_message_signature( message, private_key ):
-    lms_typecode = private_key["lms_typecode"]
+    lms_typecode = lms.lms_typestring_to_typecode[ private_key["lms_typestring"] ]
     L = private_key["L"]
     lms_prv = private_key["lms_prv"] # no deepcopy; should change dynamically
     lms_pub = private_key["lms_pub"] # no deepcopy; should change dynamically
@@ -121,6 +157,34 @@ def hss_serialize_signature( Npsk, signed_pub_keys, msg_sig ):
         serialized = serialized + pub_key_sig["serialized"]
     serialized = serialized + msg_sig["serialized"]
     return serialized
+
+
+def hss_deserialize_signature( serialized ):
+    Npsk = to_int( serialized[ 0 : u32str_bytelen ] )
+    signed_pub_keys = []
+    remaining_ser = serialized[ u32str_bytelen : ]
+    for i in range( Npsk ):
+        lms_sig, remaining_ser = lms.lms_deserialize_signature_from_hss( remaining_ser )
+        lms_pub, remaining_ser = lms.lms_deserialize_public_key_from_hss( remaining_ser )
+        signed_pub_keys.append(
+            { "sig" : lms_sig,
+              "pub" : lms_pub,
+              "serialized" : lms_sig["serialized"] + lms_pub["serialized"] } )
+    msg_sig, remaining_ser = lms.lms_deserialize_signature_from_hss( remaining_ser )
+    signature = {
+        "Npsk": Npsk,
+        "signed_pub_keys": signed_pub_keys,
+        "msg_sig": msg_sig, 
+        "serialized": serialized
+    }
+    return signature
+
+
+def hss_read_signature_from_file( filename ):
+    with open( filename, 'rb' ) as f:
+        sig_serialized = f.read()
+        sig = hss_deserialize_signature( sig_serialized )
+    return sig
 
 
 ### Verify

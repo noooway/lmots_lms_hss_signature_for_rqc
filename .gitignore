@@ -1,3 +1,7 @@
 *.pyc
 __pycache__
 *~
+\#*\#
+*.odt
+*.out
+reference_version*

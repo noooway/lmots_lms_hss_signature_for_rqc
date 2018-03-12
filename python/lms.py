@@ -5,6 +5,8 @@ import hashlib as H
 import lmots
 from utils import *
 
+import binascii
+
 lms_typestring_to_typecode = {
     "lms_reserved": 0,
     "lms_sha256_m32_h5": 5,
@@ -44,8 +46,9 @@ lms_typecode_to_params = [
 LMS_D_LEAF = int( "0x8282", 0 )
 LMS_D_INTR = int( "0x8383", 0 )
 
-def lms_gen_keypair( typestring ):
-    prv = lms_gen_private_key( typestring )
+def lms_gen_keypair( typestring, ots_typestring = "lmots_sha256_n32_w1",
+                     I = None, use_pseudorandom_with_SEED = None ):
+    prv = lms_gen_private_key( typestring, ots_typestring, I, use_pseudorandom_with_SEED )
     pub = lms_gen_public_key( typestring, prv )
     return (prv, pub)
 
@@ -74,14 +77,16 @@ def lms_is_private_key_exhausted( private_key ):
 
 ### Private key
 
-def lms_gen_private_key( typestring, ots_typestring = "lmots_sha256_n32_w1" ):
+def lms_gen_private_key( typestring, ots_typestring = "lmots_sha256_n32_w1",
+                         I = None, use_pseudorandom_with_SEED = None ):
     typecode = lms_typestring_to_typecode[ typestring ]
     m, h = lms_typecode_to_params[ typecode ]
-    I = lms_gen_I()
+    I = I or lms_gen_I()
     ots_priv = []
     ots_pub = []
     for q in range( 2 ** h ):
-        priv, pub = lmots.lmots_gen_keypair( ots_typestring, I, q )
+        priv, pub = lmots.lmots_gen_keypair( ots_typestring, I, q,
+                                             use_pseudorandom_with_SEED )
         ots_priv.append( priv )
         ots_pub.append( pub )
     q = 0
@@ -91,7 +96,8 @@ def lms_gen_private_key( typestring, ots_typestring = "lmots_sha256_n32_w1" ):
         "q": q,
         "ots_typecode": lmots.lmots_typestring_to_typecode[ ots_typestring ],
         "ots_priv": ots_priv,
-        "ots_pub": ots_pub
+        "ots_pub": ots_pub,
+        "use_pseudorandom_with_SEED": use_pseudorandom_with_SEED
     }
     return prv
 
@@ -104,6 +110,15 @@ def lms_update_q( private_key ):
     private_key["q"] += 1
 
 
+def lms_short_print_private_key_for_hss( private_key, hss_idx ):
+    print( "LMS private key:", hss_idx )
+    print( "lms_typecode:", private_key["typecode"] )
+    print( "ots_typecode:", private_key["ots_typecode"] )
+    print( "I:", binascii.hexlify( private_key["I"] ) )
+    print( "q:", private_key["q"] )
+    print( "SEED:", binascii.hexlify( private_key["use_pseudorandom_with_SEED"] ) )
+    
+    
 ### Public key
 
 def lms_gen_public_key( typestring, prv ):
@@ -119,8 +134,7 @@ def lms_gen_public_key( typestring, prv ):
         "ots_typecode" : ots_typecode,
         "I" : I,
         "T1" : T1,        
-        "serialized": serialized,
-        "used_ots_pub_debug": ots_pub[q]
+        "serialized": serialized
     }
     return pub
 
@@ -152,6 +166,32 @@ def lms_serialize_pub_key( typecode, ots_typecode, I, T1 ):
     return ( u32str( typecode ) + u32str( ots_typecode ) + I + T1 )
 
 
+def lms_deserialize_pub_key( serialized ):
+    lms_typecode = to_int( serialized[ 0 : u32str_bytelen ] )
+    ots_typecode = to_int( serialized[ u32str_bytelen :
+                                       u32str_bytelen + u32str_bytelen ] )
+    I = serialized[ u32str_bytelen + u32str_bytelen :
+                    u32str_bytelen + u32str_bytelen + lmots.LMOTS_I_LEN ]
+    m, h = lms_typecode_to_params[ lms_typecode ]
+    T1 = serialized[ u32str_bytelen + u32str_bytelen + lmots.LMOTS_I_LEN :
+                     u32str_bytelen + u32str_bytelen + lmots.LMOTS_I_LEN + m ]
+    pub = {
+        "typecode" : lms_typecode,
+        "ots_typecode" : ots_typecode,
+        "I" : I,
+        "T1" : T1,        
+        "serialized": serialized,
+    }
+    return pub
+    
+
+def lms_deserialize_public_key_from_hss( part_of_ser_hss_pubkey ):
+    pub = lms_deserialize_pub_key( part_of_ser_hss_pubkey )
+    pub["serialized"] = lms_serialize_pub_key(
+        pub["typecode"], pub["ots_typecode"], pub["I"], pub["T1"] )
+    pub_len = len( pub["serialized"] )
+    return( pub, part_of_ser_hss_pubkey[ pub_len : ] )
+
 
 ### Sign
 
@@ -171,7 +211,7 @@ def lms_compute_message_signature( message, private_key ):
         "typecode": typecode,
         "ots_signature": ots_signature,
         "leaf_to_root_path": leaf_to_root_path,
-        "serialized": serialized
+        "serialized": serialized,
     }
     return signature
 
@@ -195,10 +235,6 @@ def lms_compute_leaf_to_root_path( typecode, I, q, ots_pub ):
 def lms_tree_node_hash( typecode, I, r, ots_pub ):
     m, h = lms_typecode_to_params[ typecode ]
     if r >= 2 ** h :
-        # out = H.sha256( I + u32str(r) + u16str( LMS_D_LEAF ) +
-        #                 ots_pub[ r - 2**h ]["serialized"] ).digest()
-        # In alg 6b:
-        # tmp = H.sha256( I + u32str( node_num ) + u16str( LMS_D_LEAF ) + Kc ).digest()
         out = H.sha256( I + u32str(r) + u16str( LMS_D_LEAF ) +
                         ots_pub[ r - 2**h ]["K"] ).digest()
     else:
@@ -215,10 +251,37 @@ def lms_serialize_signature( q, typecode, ots_signature, leaf_to_root_path ):
     return serialized
 
 
+def lms_deserialize_signature( serialized ):
+    q = to_int( serialized[ 0 : u32str_bytelen ] )
+    ots_signature, remaining_serialized = lmots.lmots_deserialize_signature_from_lms(
+        serialized[ u32str_bytelen : ] )
+    typecode = to_int( remaining_serialized[ 0 : u32str_bytelen ] )
+    m, h = lms_typecode_to_params[ typecode ]
+    leaf_to_root_path = []
+    for i in range( h ): # todo: unnecessary node (top) incuded in leaf-to-root path?
+        leaf_to_root_path.append(
+            remaining_serialized[ u32str_bytelen + i * m :
+                                  u32str_bytelen + (i+1) * m ] )
+    signature = {
+        "q": q,
+        "typecode": typecode,
+        "ots_signature": ots_signature,
+        "leaf_to_root_path": leaf_to_root_path,
+        "serialized": serialized
+    }
+    return signature
+
+
+def lms_deserialize_signature_from_hss( part_of_ser_hss_signature ):
+    signature = lms_deserialize_signature( part_of_ser_hss_signature )
+    signature["serialized"] = lms_serialize_signature(
+        signature["q"], signature["typecode"],
+        signature["ots_signature"], signature["leaf_to_root_path"] )
+    sig_len = len( signature["serialized"] )
+    return( signature, part_of_ser_hss_signature[ sig_len : ] )
 
 
 ### Verify
-
 
 def lms_is_correct_signature( message, signature, public_key ):
     if lms_is_pub_too_short( public_key ):
@@ -248,8 +311,7 @@ def lms_is_pub_too_short( public_key ):
     return len( public_key["serialized"] ) < 4
 
 def lms_is_pub_wrong_len( public_key ):
-    m, h = lms_typecode_to_params[ public_key["typecode"] ]    
-    #return len( public_key["serialized"] ) != 20 + m # todo: it seems, 24 is correct
+    m, h = lms_typecode_to_params[ public_key["typecode"] ]
     return len( public_key["serialized"] ) != 24 + m
 
 
